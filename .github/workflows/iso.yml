@@ -27,13 +27,14 @@ jobs:
         cd buildroot
         make defconfig
 
-        # x86_64
+        # Target architecture
         sed -i 's/# BR2_x86_64 is not set/BR2_x86_64=y/' .config
 
-        # Kernel (vanilla)
+        # Linux kernel (vanilla)
         sed -i 's/# BR2_LINUX_KERNEL is not set/BR2_LINUX_KERNEL=y/' .config
         echo 'BR2_LINUX_KERNEL_CUSTOM_VERSION=y' >> .config
         echo 'BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.7.9"' >> .config
+        echo 'BR2_LINUX_KERNEL_DEFCONFIG="x86_64_defconfig"' >> .config
 
         # BusyBox
         echo 'BR2_PACKAGE_BUSYBOX=y' >> .config
@@ -45,16 +46,17 @@ jobs:
         echo 'BR2_PACKAGE_XTERM=y' >> .config
         echo 'BR2_PACKAGE_DEJAVU=y' >> .config
 
-        # Rootfs tar
+        # Root filesystem
         echo 'BR2_TARGET_ROOTFS_TAR=y' >> .config
 
         make olddefconfig
 
-    - name: Add TrixieOS files + TRX
+    - name: Add TrixieOS system files + TRX
       run: |
         cd buildroot
         ROOT=board/trixieos/rootfs
 
+        # OS identity
         mkdir -p $ROOT/etc
         cat <<EOF > $ROOT/etc/os-release
         NAME="TrixieOS"
@@ -86,9 +88,9 @@ jobs:
             if [ -f "$DIR/$PKG.trx" ]; then
               echo "[trx] $PKG kuruluyor"
               tar -xf "$DIR/$PKG.trx" -C /
-              echo "[trx] tamam"
+              echo "[trx] tamamlandı"
             else
-              echo "[trx] paket yok: $PKG"
+              echo "[trx] paket bulunamadı: $PKG"
             fi
             ;;
           list)
@@ -113,7 +115,7 @@ jobs:
     - name: Build TrixieOS
       run: |
         cd buildroot
-        make -j$(nproc)
+        make -j2
 
     - name: Create Live ISO (GRUB)
       run: |
