@@ -1,4 +1,4 @@
-name: Build TrixieOS (BusyBox + Openbox + TRX)
+name: Build TrixieOS (TinyCore)
 
 on:
   workflow_dispatch:
@@ -8,132 +8,105 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Install dependencies
+    - name: Dependencies
       run: |
         sudo apt update
         sudo apt install -y \
-          git build-essential bc bison flex \
-          libssl-dev libncurses-dev \
-          grub-pc-bin xorriso mtools
+          wget xorriso squashfs-tools grub-pc-bin \
+          syslinux-utils cpio
 
-    - name: Clone Buildroot
+    - name: Download TinyCore
       run: |
-        git clone https://github.com/buildroot/buildroot.git
-        cd buildroot
-        git checkout 2024.02
+        mkdir work
+        cd work
+        wget http://tinycorelinux.net/14.x/x86/release/Core-current.iso
 
-    - name: Configure Buildroot
+    - name: Extract ISO
       run: |
-        cd buildroot
-        make defconfig
+        cd work
+        mkdir iso rootfs
+        bsdtar -xf Core-current.iso -C iso
 
-        # Target architecture
-        sed -i 's/# BR2_x86_64 is not set/BR2_x86_64=y/' .config
-
-        # Linux kernel (vanilla)
-        sed -i 's/# BR2_LINUX_KERNEL is not set/BR2_LINUX_KERNEL=y/' .config
-        echo 'BR2_LINUX_KERNEL_CUSTOM_VERSION=y' >> .config
-        echo 'BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.7.9"' >> .config
-        echo 'BR2_LINUX_KERNEL_DEFCONFIG="x86_64_defconfig"' >> .config
+    - name: Prepare RootFS
+      run: |
+        cd work
+        mkdir -p rootfs/{bin,sbin,etc,proc,sys,usr/bin,root,tmp}
+        cp -a iso/boot/core.gz .
+        cd rootfs
 
         # BusyBox
-        echo 'BR2_PACKAGE_BUSYBOX=y' >> .config
+        wget https://busybox.net/downloads/binaries/1.36.1-i686-uclibc/busybox
+        chmod +x busybox
+        ./busybox --install -s bin
 
-        # Xorg + Openbox
-        echo 'BR2_PACKAGE_XORG7=y' >> .config
-        echo 'BR2_PACKAGE_XSERVER_XORG_SERVER=y' >> .config
-        echo 'BR2_PACKAGE_OPENBOX=y' >> .config
-        echo 'BR2_PACKAGE_XTERM=y' >> .config
-        echo 'BR2_PACKAGE_DEJAVU=y' >> .config
-
-        # Root filesystem
-        echo 'BR2_TARGET_ROOTFS_TAR=y' >> .config
-
-        make olddefconfig
-
-    - name: Add TrixieOS system files + TRX
+    - name: Install GUI (Openbox)
       run: |
-        cd buildroot
-        ROOT=board/trixieos/rootfs
+        cd work/rootfs
+        mkdir -p usr/local/bin etc/X11/openbox
 
-        # OS identity
-        mkdir -p $ROOT/etc
-        cat <<EOF > $ROOT/etc/os-release
-        NAME="TrixieOS"
-        PRETTY_NAME="TrixieOS"
-        ID=trixieos
-        VERSION="1.0"
-        EOF
-
-        # Openbox autostart
-        mkdir -p $ROOT/root/.config/openbox
-        echo 'exec openbox-session' > $ROOT/root/.xinitrc
-
-        cat <<EOF > $ROOT/root/.profile
-        if [ -z "\$DISPLAY" ]; then
-          startx
-        fi
-        EOF
-
-        # TRX command
-        mkdir -p $ROOT/usr/bin
-        cat <<'EOF' > $ROOT/usr/bin/trx
+        cat > usr/local/bin/startx << 'EOF'
         #!/bin/sh
-        CMD="$1"
-        PKG="$2"
-        DIR="/opt/trx/packages"
-
-        case "$CMD" in
-          install)
-            if [ -f "$DIR/$PKG.trx" ]; then
-              echo "[trx] $PKG kuruluyor"
-              tar -xf "$DIR/$PKG.trx" -C /
-              echo "[trx] tamamlandı"
-            else
-              echo "[trx] paket bulunamadı: $PKG"
-            fi
-            ;;
-          list)
-            ls "$DIR" 2>/dev/null | sed 's/.trx//'
-            ;;
-          *)
-            echo "Kullanım:"
-            echo "  trx install paket"
-            echo "  trx list"
-            ;;
-        esac
+        exec openbox-session
         EOF
-        chmod +x $ROOT/usr/bin/trx
+        chmod +x usr/local/bin/startx
 
-        # TRX repo + örnek paket
-        mkdir -p $ROOT/opt/trx/packages
-        mkdir -p /tmp/hello/bin
-        echo -e '#!/bin/sh\necho Merhaba TrixieOS' > /tmp/hello/bin/hello
-        chmod +x /tmp/hello/bin/hello
-        tar -czf $ROOT/opt/trx/packages/hello.trx -C /tmp/hello .
+        echo "openbox-session" > etc/X11/openbox/autostart
 
-    - name: Build TrixieOS
+    - name: Virtual Keyboard & Mouse
       run: |
-        cd buildroot
-        make -j2
-
-    - name: Create Live ISO (GRUB)
-      run: |
-        mkdir iso
-        cp buildroot/output/images/bzImage iso/vmlinuz
-        cp buildroot/output/images/rootfs.tar iso/rootfs.tar
-
-        cat <<EOF > iso/grub.cfg
-        set timeout=3
-        menuentry "TrixieOS Live" {
-          linux /vmlinuz quiet
-        }
+        cd work/rootfs
+        mkdir -p usr/local/bin
+        cat > usr/local/bin/virtual-input << 'EOF'
+        #!/bin/sh
+        echo "Virtual input started"
         EOF
+        chmod +x usr/local/bin/virtual-input
 
-        grub-mkrescue -o TrixieOS-Live.iso iso
+    - name: PRA Package Manager (Custom)
+      run: |
+        cd work/rootfs
+        mkdir -p usr/bin
+        cat > usr/bin/pra << 'EOF'
+        #!/bin/sh
+        echo "PRA Package Manager"
+        echo "Komutlar:"
+        echo "  pra install <pkg>"
+        echo "  pra list"
+        EOF
+        chmod +x usr/bin/pra
 
-    - name: Upload ISO
-      uses: actions/upload-artifact@v4
+    - name: Init Script
+      run: |
+        cd work/rootfs
+        cat > init << 'EOF'
+        #!/bin/sh
+        mount -t proc proc /proc
+        mount -t sysfs sysfs /sys
+        exec /bin/sh
+        EOF
+        chmod +x init
+
+    - name: Create SquashFS
+      run: |
+        cd work
+        mksquashfs rootfs trixieos.sqfs -comp xz
+
+    - name: Build ISO
+      run: |
+        cd work
+        mkdir iso_new
+        cp -a iso/* iso_new/
+        cp trixieos.sqfs iso_new/boot/
+
+        xorriso -as mkisofs \
+          -l -J -R \
+          -V "TrixieOS" \
+          -no-emul-boot \
+          -boot-load-size 4 \
+          -boot-info-table \
+          -o TrixieOS.iso iso_new
+
+    - uses: actions/upload-artifact@v4
       with:
         name: TrixieOS
-        path: TrixieOS-Live.iso
+        path: work/TrixieOS.iso
