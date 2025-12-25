@@ -1,4 +1,4 @@
-name: Build TrixieOS (TinyCore)
+name: TrixieOS ISO (glibc + Openbox)
 
 on:
   workflow_dispatch:
@@ -8,105 +8,63 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Dependencies
+    - name: Install dependencies
       run: |
         sudo apt update
         sudo apt install -y \
-          wget xorriso squashfs-tools grub-pc-bin \
-          syslinux-utils cpio
+          build-essential git bc bison flex libssl-dev libelf-dev \
+          rsync cpio unzip file wget \
+          xorriso grub-pc-bin grub-efi-amd64-bin
 
-    - name: Download TinyCore
+    - name: Clone Buildroot
       run: |
-        mkdir work
-        cd work
-        wget http://tinycorelinux.net/14.x/x86/release/Core-current.iso
+        git clone https://github.com/buildroot/buildroot.git
+        cd buildroot
+        git checkout 2024.02
 
-    - name: Extract ISO
+    - name: Base config (QEMU x86_64)
       run: |
-        cd work
-        mkdir iso rootfs
-        bsdtar -xf Core-current.iso -C iso
+        cd buildroot
+        make qemu_x86_64_defconfig
 
-    - name: Prepare RootFS
+    - name: Custom TrixieOS config
       run: |
-        cd work
-        mkdir -p rootfs/{bin,sbin,etc,proc,sys,usr/bin,root,tmp}
-        cp -a iso/boot/core.gz .
-        cd rootfs
+        cd buildroot
+        cat >> .config << 'EOF'
+        BR2_TARGET_GENERIC_HOSTNAME="TrixieOS"
+        BR2_TARGET_GENERIC_ISSUE="TrixieOS - Educational Linux"
 
-        # BusyBox
-        wget https://busybox.net/downloads/binaries/1.36.1-i686-uclibc/busybox
-        chmod +x busybox
-        ./busybox --install -s bin
+        BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
 
-    - name: Install GUI (Openbox)
-      run: |
-        cd work/rootfs
-        mkdir -p usr/local/bin etc/X11/openbox
+        BR2_LINUX_KERNEL=y
+        BR2_LINUX_KERNEL_USE_DEFCONFIG=y
+        BR2_LINUX_KERNEL_DEFCONFIG="x86_64_defconfig"
 
-        cat > usr/local/bin/startx << 'EOF'
-        #!/bin/sh
-        exec openbox-session
+        BR2_PACKAGE_BUSYBOX=y
+
+        BR2_PACKAGE_XORG7=y
+        BR2_PACKAGE_XSERVER_XORG_SERVER=y
+        BR2_PACKAGE_XINIT=y
+        BR2_PACKAGE_OPENBOX=y
+        BR2_PACKAGE_XTERM=y
+
+        BR2_PACKAGE_GRUB2=y
+
+        BR2_TARGET_ROOTFS_ISO9660=y
+        BR2_TARGET_ROOTFS_ISO9660_BOOTABLE=y
+        BR2_TARGET_ROOTFS_ISO9660_GRUB2=y
+        BR2_TARGET_ROOTFS_ISO9660_VOLUME_ID="TrixieOS"
         EOF
-        chmod +x usr/local/bin/startx
 
-        echo "openbox-session" > etc/X11/openbox/autostart
-
-    - name: Virtual Keyboard & Mouse
-      run: |
-        cd work/rootfs
-        mkdir -p usr/local/bin
-        cat > usr/local/bin/virtual-input << 'EOF'
-        #!/bin/sh
-        echo "Virtual input started"
-        EOF
-        chmod +x usr/local/bin/virtual-input
-
-    - name: PRA Package Manager (Custom)
-      run: |
-        cd work/rootfs
-        mkdir -p usr/bin
-        cat > usr/bin/pra << 'EOF'
-        #!/bin/sh
-        echo "PRA Package Manager"
-        echo "Komutlar:"
-        echo "  pra install <pkg>"
-        echo "  pra list"
-        EOF
-        chmod +x usr/bin/pra
-
-    - name: Init Script
-      run: |
-        cd work/rootfs
-        cat > init << 'EOF'
-        #!/bin/sh
-        mount -t proc proc /proc
-        mount -t sysfs sysfs /sys
-        exec /bin/sh
-        EOF
-        chmod +x init
-
-    - name: Create SquashFS
-      run: |
-        cd work
-        mksquashfs rootfs trixieos.sqfs -comp xz
+        make olddefconfig
 
     - name: Build ISO
       run: |
-        cd work
-        mkdir iso_new
-        cp -a iso/* iso_new/
-        cp trixieos.sqfs iso_new/boot/
-
-        xorriso -as mkisofs \
-          -l -J -R \
-          -V "TrixieOS" \
-          -no-emul-boot \
-          -boot-load-size 4 \
-          -boot-info-table \
-          -o TrixieOS.iso iso_new
+        cd buildroot
+        make -j$(nproc)
+        cp output/images/rootfs.iso9660 TrixieOS.iso
 
     - uses: actions/upload-artifact@v4
       with:
-        name: TrixieOS
-        path: work/TrixieOS.iso
+        name: TrixieOS-ISO
+        path: buildroot/TrixieOS.iso
