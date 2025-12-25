@@ -1,0 +1,96 @@
+name: TrixieOS Buildroot ISO
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          build-essential bc bison flex \
+          libncurses-dev libssl-dev \
+          cpio rsync unzip wget \
+          grub-pc-bin grub-common xorriso
+
+    - name: Clone Buildroot
+      run: |
+        git clone https://github.com/buildroot/buildroot.git
+        cd buildroot
+        git checkout 2023.11
+
+    - name: Configure Buildroot
+      run: |
+        cd buildroot
+        make x86_64_defconfig
+
+        cat >> .config <<'EOF'
+BR2_x86_64=y
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_INIT_BUSYBOX=y
+
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.1.63"
+BR2_LINUX_KERNEL_DEFCONFIG="x86_64"
+BR2_LINUX_KERNEL_VMLINUX=y
+
+BR2_PACKAGE_BUSYBOX=y
+BR2_PACKAGE_OPENBOX=y
+BR2_PACKAGE_XORG7=y
+BR2_PACKAGE_XSERVER_XORG_SERVER=y
+BR2_PACKAGE_XINIT=y
+BR2_PACKAGE_XTERM=y
+BR2_PACKAGE_TINT2=y
+
+BR2_TARGET_ROOTFS_CPIO=y
+BR2_TARGET_ROOTFS_CPIO_GZIP=y
+EOF
+
+        make olddefconfig
+
+    - name: Build Buildroot
+      run: |
+        cd buildroot
+        make -j$(nproc)
+
+    - name: Create ISO structure
+      run: |
+        mkdir -p iso/boot/grub
+        cp buildroot/output/images/bzImage iso/boot/vmlinuz
+        cp buildroot/output/images/rootfs.cpio.gz iso/boot/initramfs.gz
+
+    - name: GRUB config with TEXT boot splash
+      run: |
+        cat > iso/boot/grub/grub.cfg <<'EOF'
+set timeout=3
+set default=0
+
+menuentry "TrixieOS Live" {
+  echo ""
+  echo "=============================="
+  echo "        TrixieOS"
+  echo "  ProjectA tarafından yapıldı"
+  echo "=============================="
+  echo ""
+  linux /boot/vmlinuz quiet loglevel=0 vt.global_cursor_default=0
+  initrd /boot/initramfs.gz
+}
+EOF
+
+    - name: Build ISO
+      run: |
+        grub-mkrescue -o TrixieOS.iso iso
+
+    - name: Upload ISO
+      uses: actions/upload-artifact@v4
+      with:
+        name: TrixieOS-ISO
+        path: TrixieOS.iso
