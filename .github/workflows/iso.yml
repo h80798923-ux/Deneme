@@ -1,4 +1,4 @@
-name: TrixieOS ISO (glibc + Openbox)
+name: TrixieOS Buildroot ISO
 
 on:
   workflow_dispatch:
@@ -8,63 +8,99 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
     - name: Install dependencies
       run: |
         sudo apt update
         sudo apt install -y \
-          build-essential git bc bison flex libssl-dev libelf-dev \
-          rsync cpio unzip file wget \
-          xorriso grub-pc-bin grub-efi-amd64-bin
+          build-essential bc bison flex \
+          libncurses-dev libssl-dev \
+          cpio rsync unzip wget \
+          grub-pc-bin grub-common xorriso
 
     - name: Clone Buildroot
       run: |
         git clone https://github.com/buildroot/buildroot.git
         cd buildroot
-        git checkout 2024.02
+        git checkout 2023.11
 
-    - name: Base config (QEMU x86_64)
+    - name: Configure Buildroot
       run: |
         cd buildroot
-        make qemu_x86_64_defconfig
+        make x86_64_defconfig
 
-    - name: Custom TrixieOS config
-      run: |
-        cd buildroot
-        cat >> .config << 'EOF'
-        BR2_TARGET_GENERIC_HOSTNAME="TrixieOS"
-        BR2_TARGET_GENERIC_ISSUE="TrixieOS - Educational Linux"
+        cat >> .config <<'EOF'
+BR2_x86_64=y
 
-        BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+# TOOLCHAIN
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
 
-        BR2_LINUX_KERNEL=y
-        BR2_LINUX_KERNEL_USE_DEFCONFIG=y
-        BR2_LINUX_KERNEL_DEFCONFIG="x86_64_defconfig"
+# INIT
+BR2_INIT_BUSYBOX=y
 
-        BR2_PACKAGE_BUSYBOX=y
+# KERNEL
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.1.63"
+BR2_LINUX_KERNEL_DEFCONFIG="x86_64_defconfig"
+BR2_LINUX_KERNEL_IMAGE=y
+BR2_LINUX_KERNEL_BZIMAGE=y
 
-        BR2_PACKAGE_XORG7=y
-        BR2_PACKAGE_XSERVER_XORG_SERVER=y
-        BR2_PACKAGE_XINIT=y
-        BR2_PACKAGE_OPENBOX=y
-        BR2_PACKAGE_XTERM=y
+# INITRAMFS
+BR2_TARGET_ROOTFS_INITRAMFS=y
+BR2_TARGET_ROOTFS_INITRAMFS_GZIP=y
 
-        BR2_PACKAGE_GRUB2=y
+# BUSYBOX
+BR2_PACKAGE_BUSYBOX=y
 
-        BR2_TARGET_ROOTFS_ISO9660=y
-        BR2_TARGET_ROOTFS_ISO9660_BOOTABLE=y
-        BR2_TARGET_ROOTFS_ISO9660_GRUB2=y
-        BR2_TARGET_ROOTFS_ISO9660_VOLUME_ID="TrixieOS"
-        EOF
+# XORG + OPENBOX
+BR2_PACKAGE_XORG7=y
+BR2_PACKAGE_XSERVER_XORG_SERVER=y
+BR2_PACKAGE_XINIT=y
+BR2_PACKAGE_XTERM=y
+BR2_PACKAGE_OPENBOX=y
+BR2_PACKAGE_TINT2=y
+EOF
 
         make olddefconfig
 
-    - name: Build ISO
+    - name: Build Buildroot
       run: |
         cd buildroot
         make -j$(nproc)
-        cp output/images/rootfs.iso9660 TrixieOS.iso
 
-    - uses: actions/upload-artifact@v4
+    - name: Create ISO structure
+      run: |
+        mkdir -p iso/boot/grub
+        cp buildroot/output/images/bzImage iso/boot/vmlinuz
+        cp buildroot/output/images/rootfs.cpio.gz iso/boot/initramfs.gz
+
+    - name: GRUB config (TEXT splash)
+      run: |
+        cat > iso/boot/grub/grub.cfg <<'EOF'
+set timeout=3
+set default=0
+
+menuentry "TrixieOS Live (Buildroot)" {
+  echo ""
+  echo "=============================="
+  echo "        TrixieOS"
+  echo "   PROJECTA tarafından yapıldı"
+  echo "=============================="
+  echo ""
+  linux /boot/vmlinuz quiet loglevel=3
+  initrd /boot/initramfs.gz
+}
+EOF
+
+    - name: Build ISO
+      run: |
+        grub-mkrescue -o TrixieOS.iso iso
+
+    - name: Upload ISO
+      uses: actions/upload-artifact@v4
       with:
         name: TrixieOS-ISO
-        path: buildroot/TrixieOS.iso
+        path: TrixieOS.iso
