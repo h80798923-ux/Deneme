@@ -1,0 +1,74 @@
+name: TrixieOS ISO (Openbox + glibc)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Install deps
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          build-essential git bc bison flex \
+          libssl-dev libelf-dev \
+          rsync cpio unzip file \
+          xorriso grub-pc-bin
+
+    - name: Clone Buildroot
+      run: |
+        git clone https://github.com/buildroot/buildroot.git
+        cd buildroot
+        git checkout 2024.02
+
+    - name: Base defconfig (qemu x86_64)
+      run: |
+        cd buildroot
+        make qemu_x86_64_defconfig
+
+    - name: Custom TrixieOS config
+      run: |
+        cd buildroot
+
+        cat >> .config << 'EOF'
+        BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+
+        BR2_LINUX_KERNEL=y
+        BR2_LINUX_KERNEL_USE_DEFCONFIG=y
+        BR2_LINUX_KERNEL_DEFCONFIG="x86_64_defconfig"
+
+        BR2_PACKAGE_BUSYBOX=y
+
+        BR2_PACKAGE_XORG7=y
+        BR2_PACKAGE_XSERVER_XORG_SERVER=y
+        BR2_PACKAGE_XINIT=y
+        BR2_PACKAGE_OPENBOX=y
+        BR2_PACKAGE_XTERM=y
+
+        BR2_PACKAGE_GRUB2=y
+
+        BR2_TARGET_ROOTFS_ISO9660=y
+        BR2_TARGET_ROOTFS_ISO9660_GRUB2=y
+        BR2_TARGET_ROOTFS_ISO9660_VOLUME_ID="TrixieOS"
+
+        BR2_TARGET_GENERIC_HOSTNAME="trixieos"
+        BR2_TARGET_GENERIC_ISSUE="TrixieOS - Education Linux"
+        EOF
+
+        make olddefconfig
+
+    - name: Build ISO
+      run: |
+        cd buildroot
+        make -j$(nproc)
+
+    - name: Collect ISO
+      run: |
+        cp buildroot/output/images/rootfs.iso9660 TrixieOS-Live.iso
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: TrixieOS-ISO
+        path: TrixieOS-Live.iso
